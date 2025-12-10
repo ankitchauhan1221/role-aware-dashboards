@@ -1,0 +1,78 @@
+const User = require("../models/User");
+const { body, validationResult } = require("express-validator");
+const defaultPermissions = require("../utils/permissions");
+
+// Get all users (ADMIN/MANAGER)
+exports.getUsers = async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Create user (ADMIN)
+exports.createUser = [
+  body("name").notEmpty(),
+  body("email").isEmail(),
+  body("password").isLength({ min: 6 }),
+  body("role").isIn(["ADMIN", "MANAGER", "USER"]),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ errors: errors.array() });
+
+    try {
+      const user = new User(req.body);
+      user.permissions = [
+        ...defaultPermissions[req.body.role],
+        ...(req.body.extraPermissions || []),
+      ];
+      await user.save();
+      res.status(201).json(user);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+];
+
+// Update user (ADMIN/MANAGER for others, USER for self)
+exports.updateUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id || req.user._id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Update fields (exclude role change for MANAGER/USER)
+    if (req.body.name) user.name = req.body.name;
+    if (req.body.email) user.email = req.body.email;
+    if (req.body.password) user.password = req.body.password; // Hashed in pre-save
+    if (req.user.role === "ADMIN" && req.body.role) user.role = req.body.role;
+    if (req.user.role === "ADMIN" && req.body.extraPermissions) {
+      user.permissions = [
+        ...defaultPermissions[user.role],
+        ...req.body.extraPermissions,
+      ];
+    }
+
+    await user.save();
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Delete user (ADMIN)
+exports.deleteUser = async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: "User deleted" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get self (USER)
+exports.getMe = async (req, res) => {
+  res.json(req.user);
+};
