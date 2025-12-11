@@ -2,10 +2,15 @@ const User = require("../models/User");
 const { body, validationResult } = require("express-validator");
 const defaultPermissions = require("../utils/permissions");
 
-// Get all users (ADMIN/MANAGER)
+// Get all users (ADMIN sees all, MANAGER sees only USER/MANAGER)
 exports.getUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password");
+    let query = {};
+    // MANAGER cannot see ADMIN users
+    if (req.user.role === "MANAGER") {
+      query.role = { $ne: "ADMIN" };
+    }
+    const users = await User.find(query).select("-password");
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -37,11 +42,19 @@ exports.createUser = [
   },
 ];
 
-// Update user (ADMIN/MANAGER for others, USER for self)
+// Update user (ADMIN can edit anyone, MANAGER can only edit USER/MANAGER, not ADMIN)
 exports.updateUser = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id || req.user._id);
+    const userId = req.params.id || req.user._id;
+    const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Authorization: only ADMIN can edit ADMINs; MANAGER can only edit USER/MANAGER (not ADMIN)
+    if (req.user.role === "MANAGER" && user.role === "ADMIN") {
+      return res
+        .status(403)
+        .json({ message: "MANAGER cannot edit ADMIN users" });
+    }
 
     // Update fields (exclude role change for MANAGER/USER)
     if (req.body.name) user.name = req.body.name;
